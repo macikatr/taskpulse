@@ -20,10 +20,13 @@ import {
   CheckCircle2,
   Clock,
   CircleDashed,
-  AlertCircle,
   Briefcase,
   Layers,
-  Sparkles,
+  FileText,
+  CalendarCheck,
+  Zap,
+  Info,
+  X,
 } from "lucide-react";
 
 interface WorkspaceClientProps {
@@ -56,6 +59,18 @@ export function WorkspaceClient({
   const [taskPriority, setTaskPriority] = useState<TaskPriority>("medium");
   const [creatingTask, setCreatingTask] = useState(false);
 
+  // Note Modal State (Progression & Completion Notes)
+  const [noteModal, setNoteModal] = useState<{
+    task: Task;
+    type: "progress" | "completion";
+  } | null>(null);
+  const [noteContent, setNoteContent] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+
+  // Cron Cleanup Modal / Trigger State
+  const [cronResult, setCronResult] = useState<any | null>(null);
+  const [runningCron, setRunningCron] = useState(false);
+
   // Keep workspaces updated if initialWorkspaces changes from server
   useEffect(() => {
     setWorkspaces(initialWorkspaces);
@@ -65,7 +80,7 @@ export function WorkspaceClient({
   }, [initialWorkspaces, selectedWorkspace]);
 
   // ===========================================================================
-  // REAL-TIME LISTENER: The Core of Firebase Client SDK (onSnapshot)
+  // REAL-TIME LISTENER: onSnapshot subcollection listener
   // ===========================================================================
   useEffect(() => {
     if (!selectedWorkspace) {
@@ -79,7 +94,6 @@ export function WorkspaceClient({
     const tasksRef = collection(db, "workspaces", selectedWorkspace.id, "tasks");
     const q = query(tasksRef, orderBy("createdAt", "desc"));
 
-    // onSnapshot opens a persistent WebSocket connection to Firestore
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
@@ -90,6 +104,8 @@ export function WorkspaceClient({
             workspaceId: selectedWorkspace.id,
             title: data.title,
             description: data.description,
+            progressNote: data.progressNote,
+            completionNote: data.completionNote,
             status: data.status || "todo",
             priority: data.priority || "medium",
             assignedTo: data.assignedTo,
@@ -100,6 +116,9 @@ export function WorkspaceClient({
             updatedAt: data.updatedAt?.toDate?.()
               ? data.updatedAt.toDate().toISOString()
               : new Date().toISOString(),
+            completedAt: data.completedAt?.toDate?.()
+              ? data.completedAt.toDate().toISOString()
+              : undefined,
           };
         });
 
@@ -112,11 +131,10 @@ export function WorkspaceClient({
       }
     );
 
-    // Clean up WebSocket listener when switching workspace or unmounting
     return () => unsubscribe();
   }, [selectedWorkspace]);
 
-  // Direct Client-to-Firestore Mutation (Protected by Security Rules)
+  // Update Status: When marking "done", record completedAt timestamp
   const handleUpdateStatus = async (taskId: string, newStatus: TaskStatus) => {
     if (!selectedWorkspace) return;
     try {
@@ -127,16 +145,23 @@ export function WorkspaceClient({
         "tasks",
         taskId
       );
-      await updateDoc(taskDocRef, {
+
+      const updateData: Record<string, any> = {
         status: newStatus,
         updatedAt: serverTimestamp(),
-      });
+      };
+
+      if (newStatus === "done") {
+        updateData.completedAt = serverTimestamp();
+      }
+
+      await updateDoc(taskDocRef, updateData);
     } catch (err) {
       console.error("Failed to update task status:", err);
     }
   };
 
-  // Direct Client-to-Firestore Deletion
+  // Delete Task
   const handleDeleteTask = async (taskId: string) => {
     if (!selectedWorkspace) return;
     try {
@@ -150,6 +175,63 @@ export function WorkspaceClient({
       await deleteDoc(taskDocRef);
     } catch (err) {
       console.error("Failed to delete task:", err);
+    }
+  };
+
+  // Open Note Modal
+  const handleOpenNoteModal = (task: Task, type: "progress" | "completion") => {
+    setNoteModal({ task, type });
+    setNoteContent(
+      type === "progress"
+        ? task.progressNote || ""
+        : task.completionNote || ""
+    );
+  };
+
+  // Save Note to Firestore
+  const handleSaveNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedWorkspace || !noteModal) return;
+    setSavingNote(true);
+    try {
+      const taskDocRef = doc(
+        db,
+        "workspaces",
+        selectedWorkspace.id,
+        "tasks",
+        noteModal.task.id
+      );
+
+      const payload =
+        noteModal.type === "progress"
+          ? { progressNote: noteContent.trim(), updatedAt: serverTimestamp() }
+          : { completionNote: noteContent.trim(), updatedAt: serverTimestamp() };
+
+      await updateDoc(taskDocRef, payload);
+      setNoteModal(null);
+    } catch (err) {
+      console.error("Failed to save note:", err);
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  // Trigger Cron Cleanup API Endpoint
+  const handleTriggerCron = async (days: number, minutes?: number) => {
+    setRunningCron(true);
+    setCronResult(null);
+    try {
+      const url =
+        minutes !== undefined
+          ? `/api/cron/cleanup-tasks?minutes=${minutes}`
+          : `/api/cron/cleanup-tasks?days=${days}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      setCronResult(data);
+    } catch (err) {
+      console.error("Failed to run cron cleanup:", err);
+    } finally {
+      setRunningCron(false);
     }
   };
 
@@ -224,7 +306,7 @@ export function WorkspaceClient({
 
   return (
     <div className="space-y-6">
-      {/* Workspace Selector & Top Bar */}
+      {/* Workspace Selector & Action Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-2xl bg-slate-900/60 border border-slate-800">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
@@ -253,7 +335,29 @@ export function WorkspaceClient({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Cron Simulation Controls */}
+          <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-950/60 border border-slate-800">
+            <button
+              onClick={() => handleTriggerCron(7)}
+              disabled={runningCron}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition disabled:opacity-50"
+              title="Run 7-day cleanup job"
+            >
+              <CalendarCheck className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Cron: Clean &gt; 7 Days</span>
+            </button>
+            <button
+              onClick={() => handleTriggerCron(0, 0)}
+              disabled={runningCron}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-lg text-amber-400 hover:text-amber-300 hover:bg-slate-800 transition disabled:opacity-50"
+              title="Demo: Delete all completed tasks immediately"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>Test Cleanup Now</span>
+            </button>
+          </div>
+
           <button
             onClick={() => setShowWsModal(true)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition"
@@ -272,6 +376,31 @@ export function WorkspaceClient({
           )}
         </div>
       </div>
+
+      {/* Cron Result Inspection Banner */}
+      {cronResult && (
+        <div className="p-4 rounded-xl bg-indigo-950/40 border border-indigo-500/30 text-xs text-indigo-200 flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <div className="font-semibold text-white flex items-center gap-1.5">
+              <Info className="w-4 h-4 text-indigo-400" />
+              Cron Cleanup Executed Successfully!
+            </div>
+            <p className="text-slate-300">
+              Threshold: <span className="font-mono text-indigo-300">{cronResult.cutoff?.threshold}</span> • 
+              Cutoff ISO String: <span className="font-mono text-indigo-300">{cronResult.cutoff?.isoString}</span>
+            </p>
+            <p className="text-slate-400">
+              Scanned: {cronResult.scannedCompletedTasks} completed task(s) • Deleted: {cronResult.deletedCount} task(s).
+            </p>
+          </div>
+          <button
+            onClick={() => setCronResult(null)}
+            className="text-slate-400 hover:text-white transition"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* If No Workspace Exists */}
       {workspaces.length === 0 ? (
@@ -300,6 +429,7 @@ export function WorkspaceClient({
             tasks={tasks.filter((t) => t.status === "todo")}
             onUpdateStatus={handleUpdateStatus}
             onDelete={handleDeleteTask}
+            onOpenNote={handleOpenNoteModal}
             getPriorityBadge={getPriorityBadge}
             targetStatus="in-progress"
             nextActionLabel="Start"
@@ -313,6 +443,7 @@ export function WorkspaceClient({
             tasks={tasks.filter((t) => t.status === "in-progress")}
             onUpdateStatus={handleUpdateStatus}
             onDelete={handleDeleteTask}
+            onOpenNote={handleOpenNoteModal}
             getPriorityBadge={getPriorityBadge}
             targetStatus="done"
             nextActionLabel="Complete"
@@ -326,6 +457,7 @@ export function WorkspaceClient({
             tasks={tasks.filter((t) => t.status === "done")}
             onUpdateStatus={handleUpdateStatus}
             onDelete={handleDeleteTask}
+            onOpenNote={handleOpenNoteModal}
             getPriorityBadge={getPriorityBadge}
             targetStatus="todo"
             nextActionLabel="Reopen"
@@ -334,7 +466,7 @@ export function WorkspaceClient({
       )}
 
       {/* Real-time Indicator Footer */}
-      <div className="flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-800/80 pt-4 font-mono">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 border-t border-slate-800/80 pt-4 font-mono">
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
           <span>Real-time onSnapshot WebSocket Active</span>
@@ -343,6 +475,54 @@ export function WorkspaceClient({
           Subcollection: <code className="text-slate-400">/workspaces/{selectedWorkspace?.id || "*"}/tasks</code>
         </div>
       </div>
+
+      {/* Modal: Progression / Completion Note */}
+      {noteModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <h3 className="text-base font-semibold text-white mb-1">
+              {noteModal.type === "progress" ? "Progression Notes" : "Completion Notes"}
+            </h3>
+            <p className="text-xs text-slate-400 mb-4">
+              {noteModal.type === "progress"
+                ? `Record active progress details for "${noteModal.task.title}".`
+                : `Record post-completion summary for "${noteModal.task.title}".`}
+            </p>
+            <form onSubmit={handleSaveNote} className="space-y-4">
+              <div>
+                <textarea
+                  rows={4}
+                  required
+                  value={noteContent}
+                  onChange={(e) => setNoteContent(e.target.value)}
+                  placeholder={
+                    noteModal.type === "progress"
+                      ? "e.g., Currently refactoring the token exchange service action..."
+                      : "e.g., Implemented and tested against multi-tenant isolation rules."
+                  }
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNoteModal(null)}
+                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingNote}
+                  className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition disabled:opacity-50"
+                >
+                  {savingNote ? "Saving..." : "Save Note"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Create Workspace */}
       {showWsModal && (
@@ -411,7 +591,7 @@ export function WorkspaceClient({
                   rows={3}
                   value={taskDesc}
                   onChange={(e) => setTaskDesc(e.target.value)}
-                  placeholder="Add details, edge cases, and test assertions..."
+                  placeholder="Add initial details, background context..."
                   className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
@@ -459,6 +639,7 @@ function TaskColumn({
   tasks,
   onUpdateStatus,
   onDelete,
+  onOpenNote,
   getPriorityBadge,
   targetStatus,
   nextActionLabel,
@@ -469,6 +650,7 @@ function TaskColumn({
   tasks: Task[];
   onUpdateStatus: (taskId: string, status: TaskStatus) => Promise<void>;
   onDelete: (taskId: string) => Promise<void>;
+  onOpenNote: (task: Task, type: "progress" | "completion") => void;
   getPriorityBadge: (priority: TaskPriority) => React.ReactNode;
   targetStatus: TaskStatus;
   nextActionLabel: string;
@@ -499,20 +681,53 @@ function TaskColumn({
               className="p-3.5 rounded-xl bg-slate-800/50 hover:bg-slate-800/80 border border-slate-700/60 transition group shadow-sm flex flex-col justify-between"
             >
               <div>
-                <div className="flex items-start justify-between gap-2 mb-1.5">
+                <div className="flex items-start justify-between gap-2 mb-2">
                   <h5 className="text-sm font-medium text-white leading-snug">
                     {task.title}
                   </h5>
                   {getPriorityBadge(task.priority)}
                 </div>
-                {task.description && (
-                  <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed mb-3">
+
+                {/* State-dependent content rendering */}
+                {task.status === "todo" && task.description && (
+                  <p className="text-xs text-slate-400 line-clamp-3 leading-relaxed mb-3">
                     {task.description}
                   </p>
                 )}
+
+                {task.status === "in-progress" && (
+                  <div className="mb-3 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-400 mb-0.5">
+                      Progression Notes
+                    </div>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      {task.progressNote || (
+                        <span className="italic text-slate-500">
+                          No progression notes recorded yet.
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                )}
+
+                {task.status === "done" && (
+                  <div className="mb-3 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400 mb-0.5">
+                      Completion Notes
+                    </div>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      {task.completionNote || (
+                        <span className="italic text-slate-500">
+                          Completed without extra notes.
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                )}
               </div>
 
-              <div className="flex items-center justify-between pt-2 border-t border-slate-700/40 text-xs">
+              <div className="flex items-center justify-between pt-2.5 border-t border-slate-700/40 text-xs">
+                {/* Left: Next status advance */}
                 <button
                   onClick={() => onUpdateStatus(task.id, targetStatus)}
                   className="text-[11px] font-medium text-indigo-400 hover:text-indigo-300 transition"
@@ -520,13 +735,36 @@ function TaskColumn({
                   {nextActionLabel} &rarr;
                 </button>
 
-                <button
-                  onClick={() => onDelete(task.id)}
-                  className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition"
-                  title="Delete task"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {/* Right: Add Note button (for in-progress and done) + Delete */}
+                <div className="flex items-center gap-2">
+                  {task.status === "in-progress" && (
+                    <button
+                      onClick={() => onOpenNote(task, "progress")}
+                      className="text-[11px] font-medium text-amber-400 hover:text-amber-300 transition flex items-center gap-1 bg-amber-500/10 hover:bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30"
+                    >
+                      <FileText className="w-3 h-3" />
+                      <span>{task.progressNote ? "Edit Note" : "+ Add Note"}</span>
+                    </button>
+                  )}
+
+                  {task.status === "done" && (
+                    <button
+                      onClick={() => onOpenNote(task, "completion")}
+                      className="text-[11px] font-medium text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-0.5 rounded border border-emerald-500/30"
+                    >
+                      <FileText className="w-3 h-3" />
+                      <span>{task.completionNote ? "Edit Note" : "+ Add Note"}</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => onDelete(task.id)}
+                    className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition"
+                    title="Delete task"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
           ))
