@@ -1,0 +1,52 @@
+"use server";
+
+import { cookies } from "next/headers";
+import { adminAuth } from "@/lib/firebase/admin";
+
+// Session expires in 5 days (in milliseconds)
+const SESSION_EXPIRES_IN = 60 * 60 * 24 * 5 * 1000;
+
+/**
+ * Server Action: Exchanges a verified client ID token for an HTTP-only __session cookie.
+ * 
+ * Why: Next.js Server Components cannot access browser indexedDB/localStorage.
+ * By setting an HTTP-only __session cookie, every request to the Next.js server
+ * automatically carries the user's authenticated session.
+ */
+export async function createSession(idToken: string) {
+  try {
+    // 1. Verify the ID token and create a session cookie
+    const sessionCookie = await adminAuth.createSessionCookie(idToken, {
+      expiresIn: SESSION_EXPIRES_IN,
+    });
+
+    // 2. Set the HTTP-only cookie using Next.js async cookies API
+    const cookieStore = await cookies();
+    cookieStore.set("__session", sessionCookie, {
+      maxAge: SESSION_EXPIRES_IN / 1000,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      sameSite: "lax",
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("Failed to create session cookie:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Server Action: Clears the HTTP-only __session cookie upon logout.
+ */
+export async function removeSession() {
+  try {
+    const cookieStore = await cookies();
+    cookieStore.delete("__session");
+    return { success: true };
+  } catch (error: any) {
+    console.error("Failed to delete session cookie:", error);
+    return { success: false, error: error.message };
+  }
+}
