@@ -28,27 +28,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Helper to synchronously await session creation
+  const syncSession = async (currentUser: User | null) => {
+    if (currentUser) {
+      const idToken = await currentUser.getIdToken();
+      await createSession(idToken);
+    } else {
+      await removeSession();
+    }
+  };
+
   useEffect(() => {
-    // onIdTokenChanged fires:
-    // 1. Immediately on initial load with the current user state from indexedDB
-    // 2. On sign in / sign out
-    // 3. Every hour when Firebase auto-refreshes the ID token
+    // onIdTokenChanged keeps session alive on periodic token refresh (every 1 hour)
     const unsubscribe = onIdTokenChanged(auth, async (currentUser) => {
       setUser(currentUser);
-
-      if (currentUser) {
-        try {
-          const idToken = await currentUser.getIdToken();
-          // Sync token to HTTP-only __session cookie for Next.js Server Components
-          await createSession(idToken);
-        } catch (err) {
-          console.error("Failed to sync session with server:", err);
-        }
-      } else {
-        // Clear session cookie on server
-        await removeSession();
-      }
-
       setLoading(false);
     });
 
@@ -57,15 +50,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+    const result = await signInWithPopup(auth, provider);
+    // Explicitly await session cookie generation BEFORE resolving
+    await syncSession(result.user);
   };
 
   const signInWithEmail = async (email: string, pass: string) => {
-    await signInWithEmailAndPassword(auth, email, pass);
+    const result = await signInWithEmailAndPassword(auth, email, pass);
+    // Explicitly await session cookie generation BEFORE resolving
+    await syncSession(result.user);
   };
 
   const signUpWithEmail = async (email: string, pass: string) => {
-    await createUserWithEmailAndPassword(auth, email, pass);
+    const result = await createUserWithEmailAndPassword(auth, email, pass);
+    // Explicitly await session cookie generation BEFORE resolving
+    await syncSession(result.user);
   };
 
   const signOut = async () => {

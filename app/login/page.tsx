@@ -27,6 +27,7 @@ export default function LoginPage() {
         await signInWithEmail(email, password);
       }
       router.push("/dashboard");
+      router.refresh();
     } catch (err: any) {
       console.error("Auth error:", err);
       // Clean up Firebase error messages for user readability
@@ -50,6 +51,7 @@ export default function LoginPage() {
     try {
       await signInWithGoogle();
       router.push("/dashboard");
+      router.refresh();
     } catch (err: any) {
       console.error("Google sign in error:", err);
       if (err.code !== "auth/popup-closed-by-user") {
