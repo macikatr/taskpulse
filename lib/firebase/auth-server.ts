@@ -39,7 +39,7 @@ export async function getCurrentUser(): Promise<ServerUser | null> {
       picture: decodedToken.picture,
       emailVerified: decodedToken.email_verified,
     };
-  } catch (error) {
+  } catch {
     // Session cookie is invalid, expired, or revoked
     return null;
   }

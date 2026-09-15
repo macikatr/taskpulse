@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/firebase/auth-client";
 import { LogIn, Sparkles, Mail, Lock, AlertCircle, ArrowRight } from "lucide-react";
+import { getAuthErrorMessage } from "@/lib/utils/errors";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -28,17 +29,11 @@ export default function LoginPage() {
       }
       router.push("/dashboard");
       router.refresh();
-    } catch (err: any) {
+    } catch (err) {
       console.error("Auth error:", err);
-      // Clean up Firebase error messages for user readability
-      let message = err.message || "An unexpected error occurred.";
-      if (err.code === "auth/invalid-credential" || err.code === "auth/wrong-password") {
-        message = "Invalid email or password.";
-      } else if (err.code === "auth/email-already-in-use") {
-        message = "An account with this email already exists.";
-      } else if (err.code === "auth/weak-password") {
-        message = "Password must be at least 6 characters.";
-      }
+      
+      const message = getAuthErrorMessage(err);
+
       setError(message);
     } finally {
       setSubmitting(false);
@@ -52,11 +47,14 @@ export default function LoginPage() {
       await signInWithGoogle();
       router.push("/dashboard");
       router.refresh();
-    } catch (err: any) {
+    } catch (err) {
       console.error("Google sign in error:", err);
-      if (err.code !== "auth/popup-closed-by-user") {
-        setError(err.message || "Failed to sign in with Google.");
+      if (err && typeof err === "object" && "code" in err) {
+        if (err.code !== "auth/popup-closed-by-user") {
+        setError( "Failed to sign in with Google.");
       }
+      }
+      
     } finally {
       setSubmitting(false);
     }

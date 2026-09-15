@@ -31,9 +31,11 @@ export async function createSession(idToken: string) {
     });
 
     return { success: true };
-  } catch (error: any) {
+  } catch (error) {
     console.error("Failed to create session cookie:", error);
-    return { success: false, error: error.message };
+    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+    // return { success: false, error: (error as Error).message };
+    return { success: false, error: errorMessage };
   }
 }
 
@@ -45,8 +47,9 @@ export async function removeSession() {
     const cookieStore = await cookies();
     cookieStore.delete("__session");
     return { success: true };
-  } catch (error: any) {
+  } catch (error) {
     console.error("Failed to delete session cookie:", error);
-    return { success: false, error: error.message };
+    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+    return { success: false, error: errorMessage };
   }
 }

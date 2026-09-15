@@ -12,7 +12,8 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
-import { createWorkspace, createTask } from "@/actions/workspace";
+import { createWorkspace } from "@/actions/workspace";
+import { createTask } from "@/actions/workspace-admin";
 import type { Workspace, Task, TaskStatus, TaskPriority } from "@/types/taskpulse";
 import {
   Plus,
@@ -28,6 +29,8 @@ import {
   Info,
   X,
 } from "lucide-react";
+import { cronResultSchema } from "@/types/schemas";
+import z from "zod";
 
 interface WorkspaceClientProps {
   initialWorkspaces: Workspace[];
@@ -68,7 +71,9 @@ export function WorkspaceClient({
   const [savingNote, setSavingNote] = useState(false);
 
   // Cron Cleanup Modal / Trigger State
-  const [cronResult, setCronResult] = useState<any | null>(null);
+  
+  const [cronResult, setCronResult] = useState<z.infer<typeof cronResultSchema> | null>(null);
+ 
   const [runningCron, setRunningCron] = useState(false);
 
   // Keep workspaces updated if initialWorkspaces changes from server
@@ -102,6 +107,7 @@ export function WorkspaceClient({
           return {
             id: d.id,
             workspaceId: selectedWorkspace.id,
+            ownerId: data.ownerId,
             title: data.title,
             description: data.description,
             progressNote: data.progressNote,
@@ -146,7 +152,7 @@ export function WorkspaceClient({
         taskId
       );
 
-      const updateData: Record<string, any> = {
+      const updateData: Record<string, unknown> = {
         status: newStatus,
         updatedAt: serverTimestamp(),
       };
@@ -243,10 +249,11 @@ export function WorkspaceClient({
     try {
       const res = await createWorkspace(newWsName);
       const created: Workspace = {
-        id: res.workspaceId,
+        id: res.data.workspaceId,
         name: newWsName.trim(),
         ownerId: currentUserUid,
         memberIds: [currentUserUid],
+        memberRoles: { [currentUserUid]: "admin" },
         createdAt: new Date().toISOString(),
       };
       setWorkspaces((prev) => [...prev, created]);
@@ -378,7 +385,7 @@ export function WorkspaceClient({
       </div>
 
       {/* Cron Result Inspection Banner */}
-      {cronResult && (
+      {cronResult &&  (
         <div className="p-4 rounded-xl bg-indigo-950/40 border border-indigo-500/30 text-xs text-indigo-200 flex items-start justify-between gap-4">
           <div className="space-y-1">
             <div className="font-semibold text-white flex items-center gap-1.5">
@@ -392,6 +399,23 @@ export function WorkspaceClient({
             <p className="text-slate-400">
               Scanned: {cronResult.scannedCompletedTasks} completed task(s) • Deleted: {cronResult.deletedCount} task(s).
             </p>
+            {cronResult.indexStatus && (
+              <p className="text-[11px] text-indigo-300 font-mono">
+                Index Mode: {cronResult.indexStatus}
+              </p>
+            )}
+            {cronResult.indexSetupUrl && (
+              <div className="pt-1">
+                <a
+                  href={cronResult.indexSetupUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-[11px] text-amber-400 hover:text-amber-300 underline font-medium"
+                >
+                  Enable Collection Group Index on Firebase Console &rarr;
+                </a>
+              </div>
+            )}
           </div>
           <button
             onClick={() => setCronResult(null)}
