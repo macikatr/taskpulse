@@ -52,7 +52,7 @@ firebase-debug.log
 next-env.d.ts
 
 # agentic files
-/opencode
+/.opencode
 .opencode.*
 opencode.*
 /.agents

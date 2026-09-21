@@ -6,6 +6,8 @@ Task tracking with priorities. Use `[ ]` for open and `[x]` for done; when an it
 - [x] **Call `ensureUserProfile` before the superuser check** (`app/dashboard/page.tsx`) — wired into dashboard pre-render; `createSession` also bootstraps `users/{uid}` on every sign-in/sign-up, so the profile doc exists from first login.
 - [ ] **Fix workspace ordering** (`actions/workspace.ts`) — `getUserWorkspaces()` has no `.orderBy()`, but `workspace-client.tsx` assumes "server sorts descending" for default selection. Firestore returns where-filtered docs in implicit index order, so "most recent workspace" is actually arbitrary. Add `.orderBy("createdAt", "desc")` (+ composite index: `memberIds` array-contains + `createdAt`) or sort after fetch.
 - [ ] **Protect `/api/cron/cleanup-tasks`** — it is a public GET that deletes completed tasks (`?minutes=0` deletes all). Add a shared-secret query/header check or IP allowlist for external cron use.
+- [ ] **Email verification** — sign-up currently grants a full session with no verification: no `sendEmailVerification()` call, and nothing enforces `emailVerified` (login navigates straight to `/dashboard`; `getCurrentUser()` decodes `email_verified` but never acts on it). Blocked on email-sending setup (Firebase Auth action emails / custom handler). Enforce in the client sign-in flow AND server-side (`__session` cookie carries `email_verified`).
+- [ ] **MFA (TOTP)** — after email verification: enable the TOTP provider via Admin SDK project config, add enrollment UI + handle `auth/multi-factor-auth-required` in `lib/firebase/auth-client.tsx`. See skill `.agents/skills/firebase-totp-mfa/SKILL.md`. Deps already satisfy version floors (`firebase ^12.18`, `firebase-admin ^14.3`).
 
 ## Refactoring / Cleanup
 - [ ] Remove commented-out code blocks in `app/dashboard/workspace-client.tsx` (old workspace state/selection, old sync effect).
@@ -27,6 +29,7 @@ Task tracking with priorities. Use `[ ]` for open and `[x]` for done; when an it
 - [ ] Task assignment UI: pick `assignedTo` on create and reassign later (`createTask`/`assignTask` support it; the UI never passes it).
 - [ ] Self-service profile + avatar UI: wire `updateOwnProfile`, `getProfile`, `uploadAvatar`, `defaultAvatarUrl` into the new `(shared-user)/profile` page (currently a "Coming Soon" placeholder, in design).
 - [ ] Surface Firestore permission errors in the UI: unauthorized status changes/notes/deletes are rejected by rules and silently `console.error`'d.
+- [ ] Remove/replace the Google OAuth provider — temporary scaffolding for quick dev access; target auth model is company-domain email accounts only (email/password + MFA).
 
 ## Documentation
 - [x] Document `SUPERUSER_EMAILS` and the full `.env.local` variable list (in AGENTS.md "Env vars").

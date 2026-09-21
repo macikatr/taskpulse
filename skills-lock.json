@@ -79,11 +79,23 @@
       "skillPath": "skills/firestore-rules-creation/SKILL.md",
       "computedHash": "3388a7f2254fdd5f0f794c7debf198f8007349da4c697e4f5b295c6a42d2edd6"
     },
+    "migrate-radix-to-base": {
+      "source": "shadcn/ui",
+      "sourceType": "github",
+      "skillPath": "skills/migrate-radix-to-base/SKILL.md",
+      "computedHash": "4fdc31bf287f674ba6bf91a648120f7b34cd7ef370f998f2cc116fed067789c5"
+    },
     "next-dev-loop": {
       "source": "vercel/next.js",
       "sourceType": "github",
       "skillPath": "skills/next-dev-loop/SKILL.md",
       "computedHash": "9a2cd6e78f118086f3b2dc69ba98bb34b3fb873a8bcf622eea86a0fe8e540009"
+    },
+    "shadcn": {
+      "source": "shadcn/ui",
+      "sourceType": "github",
+      "skillPath": "skills/shadcn/SKILL.md",
+      "computedHash": "d04e43ec01e921558b93bb8046c14a42a22556689a2827243df900825a4e1604"
     },
     "xcode-project-setup": {
       "source": "firebase/agent-skills",
