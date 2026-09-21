@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // Fetch the parent workspace document.
+    function workspace(workspaceId) {
+      return get(/databases/$(database)/documents/workspaces/$(workspaceId)).data;
+    }
+
+    // Workspace "admin": the owner, or a memberRoles[uid] == "admin".
+    function isWorkspaceAdmin(workspaceId) {
+      let ws = workspace(workspaceId);
+      return ws != null
+        && (ws.ownerId == request.auth.uid
+            || (ws.memberRoles is map
+                && request.auth.uid in ws.memberRoles
+                && ws.memberRoles[request.auth.uid] == "admin"));
+    }
+
+    // Workspace "member": uid is in the workspace's memberIds.
+    function isWorkspaceMember(workspaceId) {
+      let ws = workspace(workspaceId);
+      return ws != null
+        && ws.memberIds is list
+        && request.auth.uid in ws.memberIds;
+    }
+
+    // ── users/{uid} — pure display profile ─────────────────────────────────────
+
+    match /users/{uid} {
+      allow read: if isAuth();
+
+      allow update: if isAuth()
+        && uid == request.auth.uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid', 'createdAt', 'roles']);
+    }
+
+    // ── workspaces/{workspaceId} ──────────────────────────────────────────────
+
+    match /workspaces/{workspaceId} {
+      allow read: if isAuth() && isWorkspaceMember(workspaceId);
+    }
+
+    // ── workspaces/{workspaceId}/tasks/{taskId} ──────────────────────────────
+
+    match /workspaces/{workspaceId}/tasks/{taskId} {
+      allow read: if isAuth() && isWorkspaceMember(workspaceId);
+
+      allow update: if isAuth() && (
+        isWorkspaceAdmin(workspaceId)
+        || (
+          // Assignee update: ensure they are the assigned user
+          resource.data.assignedTo == request.auth.uid
+          // AND protect structural fields from being changed by a regular user
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['assignedTo', 'workspaceId', 'createdBy'])
+        )
+      );
+
+      allow delete: if isAuth() && isWorkspaceAdmin(workspaceId);
+    }
+  }
+}

@@ -29,7 +29,8 @@ export async function addMember(
   memberEmail: string,
   role: "admin" | "member" = "member"
 ) {
-    
+  await assertCanManageWs(workspaceId);
+
   // Look up the uid from email
   const authUser = await adminAuth.getUserByEmail(memberEmail.trim());
   const uid = authUser?.uid;
@@ -132,20 +133,24 @@ export async function createTask(
   }
   
   const now = FieldValue.serverTimestamp();
+  // Firestore rejects `undefined` values — omit assignedTo when unassigned
+  // (the field is optional; rules treat a missing assignedTo as "no assignee").
+  const taskData: Record<string, unknown> = {
+    title: trimmedTitle,
+    description: data.description?.trim() ?? "",
+    status: "todo",
+    priority: data.priority,
+    workspaceId,
+    ownerId: callerUid,
+    createdBy: callerUid,
+    createdAt: now,
+    updatedAt: now,
+  };
+  if (data.assignedTo) taskData.assignedTo = data.assignedTo;
+
   const taskRef = await adminDb
     .collection("workspaces").doc(workspaceId).collection("tasks")
-    .add({
-      title: trimmedTitle,
-      description: data.description?.trim() ?? "",
-      status: "todo",
-      priority: data.priority,
-      workspaceId,
-      ownerId: callerUid,
-      createdBy: callerUid,
-      assignedTo: data.assignedTo,
-      createdAt: now,
-      updatedAt: now,
-    });
+    .add(taskData);
   
   revalidatePath("/dashboard");
   return { success: true, data: { taskId: taskRef.id } };

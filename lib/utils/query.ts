@@ -58,4 +58,20 @@ export async function getLatestWorkspaceForUser({ currentUserId }: GetLatestWork
     throw error;
   }
 }
+export async function getTasksCountforUser(currentUserId: string) {
+  try {
+    const tasksRef = collection(db, "workspaces");
+    const latestQuery = query(
+      tasksRef,
+      where("assignedTo", "==", currentUserId),
+      
+    );
+
+    
+    return latestQuery;
+  } catch (error) {
+    console.error("Error fetching latest workspace:", error);
+    throw error;
+  }
+}
 

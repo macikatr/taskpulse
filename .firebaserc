@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "taskpulse-nextjs"
+  },
+  "targets": {
+    "taskpulse-nextjs": {
+      "storage": {
+        "buckets": [
+          "list"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

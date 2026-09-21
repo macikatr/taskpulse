@@ -50,17 +50,22 @@ export async function createWorkspace(
 }
 
 /**
- * Reads all workspaces where the current user is a member (or is the owner).
+ * Reads the workspaces visible to the current user.
+ * - Superusers: ALL workspaces (superuser bypasses membership, per the RBAC model).
+ * - Everyone else: only workspaces where they are in `memberIds`.
  * Used for server-side pre-rendering in the dashboard page.
  */
 export async function getUserWorkspaces(): Promise<Workspace[]> {
   const user = await getCurrentUser();
   if (!user) return [];
 
-  const snap = await adminDb
-    .collection("workspaces")
-    .where("memberIds", "array-contains", user.uid)
-    .get();
+  const isSuper = await isSuperuser(user.uid);
+
+  const baseQuery = adminDb.collection("workspaces");
+  const queryRef = isSuper
+    ? baseQuery
+    : baseQuery.where("memberIds", "array-contains", user.uid);
+  const snap = await queryRef.get();
 
   return snap.docs.map(doc => {
     const d = doc.data();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   collection,
   query,
@@ -35,16 +35,63 @@ import z from "zod";
 interface WorkspaceClientProps {
   initialWorkspaces: Workspace[];
   currentUserUid: string;
+  isSuperuser: boolean;
 }
 
 export function WorkspaceClient({
   initialWorkspaces,
   currentUserUid,
+  isSuperuser,
 }: WorkspaceClientProps) {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>(initialWorkspaces);
-  const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(
-    initialWorkspaces[0] || null
+  // const [workspaces, setWorkspaces] = useState<Workspace[]>(initialWorkspaces);
+  // const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(
+  //   initialWorkspaces[0] || null
+  // );
+
+  // Optimistic additions (created by this superuser client until the next RSC pass).
+  const [pendingWorkspaces, setPendingWorkspaces] = useState<Workspace[]>([]);
+
+  // Derived: server workspaces + local optimistic additions, dedup by id.
+  // `initialWorkspaces` is the source of truth from the server (RSC pre-render).
+  // `pendingWorkspaces` only holds workspaces that the client has created in this
+  // session and are not yet in `initialWorkspaces` (deduped by id).
+  const workspaces = useMemo<Workspace[]>(() => {
+    const serverIds = new Set(initialWorkspaces.map((w) => w.id));
+    return [...initialWorkspaces, ...pendingWorkspaces.filter((w) => !serverIds.has(w.id))];
+  }, [initialWorkspaces, pendingWorkspaces]);
+
+  // Selection: user picks an ID. Default = most recent workspace where the user
+  // is admin, else most recent workspace the user is a member of. (createdAt desc
+  // already holds for both since server sorts descending.)
+  const initialSelectedId = useMemo<string | null>(() => {
+  if (initialWorkspaces.length === 0) return null;
+  const isAdmin = (w: Workspace) =>
+    w.ownerId === currentUserUid || w.memberRoles?.[currentUserUid] === "admin";
+  const isMember = (w: Workspace) =>
+    w.ownerId === currentUserUid || (w.memberIds ?? []).includes(currentUserUid);
+  return (
+    initialWorkspaces.find(isAdmin)?.id ??
+    initialWorkspaces.find(isMember)?.id ??
+    initialWorkspaces[0]?.id ??
+    null
   );
+    }, [initialWorkspaces, currentUserUid]); 
+  const [selectedId, setSelectedId] = useState<string | null>(null); // user-set value, null = "follow default"
+
+  const selectedWorkspace = useMemo<Workspace | null>(() => {
+    // If the user explicitly picked one, honor it (as long as still in the list).
+    if (selectedId) {
+      const match = workspaces.find((w) => w.id === selectedId);
+      if (match) return match;
+    }
+    // Otherwise (or if the picked one was deleted): pick by admin > member > first, newest first.
+    if (workspaces.length === 0) return null;
+    const isAdmin = (w: Workspace) =>
+      w.ownerId === currentUserUid || w.memberRoles?.[currentUserUid] === "admin";
+    const isMember = (w: Workspace) =>
+      w.ownerId === currentUserUid || (w.memberIds ?? []).includes(currentUserUid);
+    return workspaces.find(isAdmin) ?? workspaces.find(isMember) ?? workspaces[0];
+  }, [workspaces, selectedId, currentUserUid]); 
 
   // Real-time Tasks State
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -77,68 +124,69 @@ export function WorkspaceClient({
   const [runningCron, setRunningCron] = useState(false);
 
   // Keep workspaces updated if initialWorkspaces changes from server
-  useEffect(() => {
-    setWorkspaces(initialWorkspaces);
-    if (!selectedWorkspace && initialWorkspaces.length > 0) {
-      setSelectedWorkspace(initialWorkspaces[0]);
-    }
-  }, [initialWorkspaces, selectedWorkspace]);
+  // useEffect(() => {
+  //   setWorkspaces(initialWorkspaces);
+  //   if (!selectedWorkspace && initialWorkspaces.length > 0) {
+  //     setSelectedWorkspace(initialWorkspaces[0]);
+  //   }
+  // }, [initialWorkspaces, selectedWorkspace]);
+
 
   // ===========================================================================
   // REAL-TIME LISTENER: onSnapshot subcollection listener
   // ===========================================================================
   useEffect(() => {
-    if (!selectedWorkspace) {
-      setTasks([]);
-      return;
+  if (!selectedWorkspace) {
+    // setTasks([]);
+    // setLoadingTasks(false);
+    return;
+  }
+
+  // setLoadingTasks(true);
+
+  const tasksRef = collection(db, "workspaces", selectedWorkspace.id, "tasks");
+  const q = query(tasksRef, orderBy("createdAt", "desc"));
+
+  const unsubscribe = onSnapshot(
+    q,
+    (snapshot) => {
+      const loadedTasks: Task[] = snapshot.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          workspaceId: selectedWorkspace.id,
+          ownerId: data.ownerId,
+          title: data.title,
+          description: data.description,
+          progressNote: data.progressNote,
+          completionNote: data.completionNote,
+          status: data.status || "todo",
+          priority: data.priority || "medium",
+          assignedTo: data.assignedTo,
+          createdBy: data.createdBy,
+          createdAt: data.createdAt?.toDate?.()
+            ? data.createdAt.toDate().toISOString()
+            : new Date().toISOString(),
+          updatedAt: data.updatedAt?.toDate?.()
+            ? data.updatedAt.toDate().toISOString()
+            : new Date().toISOString(),
+          completedAt: data.completedAt?.toDate?.()
+            ? data.completedAt.toDate().toISOString()
+            : undefined,
+        };
+      });
+
+      setTasks(loadedTasks);
+      setLoadingTasks(false);
+    },
+    (error) => {
+      console.error("Firestore real-time listener error:", error);
+      setLoadingTasks(false);
     }
+  );
 
-    setLoadingTasks(true);
-
-    // Path: /workspaces/{workspaceId}/tasks
-    const tasksRef = collection(db, "workspaces", selectedWorkspace.id, "tasks");
-    const q = query(tasksRef, orderBy("createdAt", "desc"));
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const loadedTasks: Task[] = snapshot.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            workspaceId: selectedWorkspace.id,
-            ownerId: data.ownerId,
-            title: data.title,
-            description: data.description,
-            progressNote: data.progressNote,
-            completionNote: data.completionNote,
-            status: data.status || "todo",
-            priority: data.priority || "medium",
-            assignedTo: data.assignedTo,
-            createdBy: data.createdBy,
-            createdAt: data.createdAt?.toDate?.()
-              ? data.createdAt.toDate().toISOString()
-              : new Date().toISOString(),
-            updatedAt: data.updatedAt?.toDate?.()
-              ? data.updatedAt.toDate().toISOString()
-              : new Date().toISOString(),
-            completedAt: data.completedAt?.toDate?.()
-              ? data.completedAt.toDate().toISOString()
-              : undefined,
-          };
-        });
-
-        setTasks(loadedTasks);
-        setLoadingTasks(false);
-      },
-      (error) => {
-        console.error("Firestore real-time listener error:", error);
-        setLoadingTasks(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [selectedWorkspace]);
+  return () => unsubscribe();
+}, [selectedWorkspace]);
 
   // Update Status: When marking "done", record completedAt timestamp
   const handleUpdateStatus = async (taskId: string, newStatus: TaskStatus) => {
@@ -256,8 +304,11 @@ export function WorkspaceClient({
         memberRoles: { [currentUserUid]: "admin" },
         createdAt: new Date().toISOString(),
       };
-      setWorkspaces((prev) => [...prev, created]);
-      setSelectedWorkspace(created);
+      // setWorkspaces((prev) => [...prev, created]);
+      // setSelectedWorkspace(created);
+      setPendingWorkspaces((prev) => [...prev, created]);
+      setSelectedId(created.id);
+
       setNewWsName("");
       setShowWsModal(false);
     } catch (err) {
@@ -324,10 +375,12 @@ export function WorkspaceClient({
             {workspaces.length > 0 ? (
               <select
                 value={selectedWorkspace?.id || ""}
-                onChange={(e) => {
-                  const ws = workspaces.find((w) => w.id === e.target.value);
-                  if (ws) setSelectedWorkspace(ws);
-                }}
+                onChange={(e) => setSelectedId(e.target.value)}
+
+                // onChange={(e) => {
+                //   const ws = workspaces.find((w) => w.id === e.target.value);
+                //   if (ws) setSelectedWorkspace(ws);
+                // }}
                 className="bg-transparent text-sm font-semibold text-white focus:outline-none cursor-pointer"
               >
                 {workspaces.map((ws) => (
@@ -344,6 +397,7 @@ export function WorkspaceClient({
 
         <div className="flex flex-wrap items-center gap-2">
           {/* Cron Simulation Controls */}
+           {isSuperuser && (
           <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-950/60 border border-slate-800">
             <button
               onClick={() => handleTriggerCron(7)}
@@ -363,16 +417,18 @@ export function WorkspaceClient({
               <Zap className="w-3.5 h-3.5" />
               <span>Test Cleanup Now</span>
             </button>
-          </div>
+          </div>)}
 
-          <button
+          {isSuperuser && (
+          <button 
             onClick={() => setShowWsModal(true)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition"
           >
             <Plus className="w-3.5 h-3.5" />
             New Workspace
-          </button>
-          {selectedWorkspace && (
+          </button>)}
+          {selectedWorkspace && (isSuperuser || selectedWorkspace.memberRoles?.[currentUserUid] === "admin" || selectedWorkspace.ownerId === currentUserUid) && (
+
             <button
               onClick={() => setShowTaskModal(true)}
               className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-500 transition shadow-sm"
@@ -426,21 +482,26 @@ export function WorkspaceClient({
         </div>
       )}
 
-      {/* If No Workspace Exists */}
-      {workspaces.length === 0 ? (
+      {/* If No Workspace Exists — shown to ANY user with zero workspaces.
+          The create CTA is superuser-only (workspace creation is superuser-gated). */}
+      { workspaces.length === 0 ?  (
         <div className="p-12 text-center rounded-2xl bg-slate-900/30 border border-dashed border-slate-800">
           <Layers className="w-12 h-12 text-slate-600 mx-auto mb-3" />
           <h3 className="text-base font-semibold text-white">No Workspaces Found</h3>
           <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-            Workspaces partition your data in Firestore. Create your first workspace to start adding tasks with real-time sync.
+            {isSuperuser
+              ? "Workspaces partition your data in Firestore. Create your first workspace to start adding tasks with real-time sync."
+              : "You don't have access to any workspaces yet. Ask a superuser to add you to a workspace."}
           </p>
-          <button
-            onClick={() => setShowWsModal(true)}
-            className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition shadow-sm"
-          >
-            <Plus className="w-4 h-4" />
-            Create Workspace
-          </button>
+          {isSuperuser && (
+            <button
+              onClick={() => setShowWsModal(true)}
+              className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              Create Workspace
+            </button>
+          )}
         </div>
       ) : (
         /* Real-Time Kanban Board */

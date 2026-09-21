@@ -75,8 +75,7 @@ export async function GET(request: Request) {
           completedDocs = allTasksSnapshot.docs.filter(
             (doc) => doc.data().status === "done"
           );
-          
-          return; // Or whatever control flow you need here to stop execution
+          // (No early return — fall through to the deletion + JSON response below.)
         }
       }
 
