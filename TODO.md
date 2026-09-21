@@ -15,7 +15,7 @@ Task tracking with priorities. Use `[ ]` for open and `[x]` for done; when an it
 - [ ] Remove `firestorecopy.rules` (stale backup of the pre-RBAC rules, on disk but gitignored) or archive it under docs.
 - [ ] Wire up or delete unused helpers in `lib/utils/query.ts` (`getMostRecentDocument`, `getLatestWorkspaceForUser`) — no callers today.
 - [ ] Fix stale field name in `firestore.rules` task-update denylist: `projectId` → `workspaceId` (no `projectId` field exists on tasks).
-- [ ] Tighten `storage.rules`: `avatars/workspaces/**` is writable by any signed-in user; rules can't distinguish Admin SDK from browser, so prefer read-only client access + server-side upload for workspace logos.
+- [x] Tighten `storage.rules` — done: removed the `workspaces` write branch (any authed user could overwrite any workspace logo); browser writes now limited to own `users/{uid}` folder, workspace logos are Admin-SDK-only (bypasses rules). Public read kept for both kinds. Required `firebase deploy` to take effect live.
 - [ ] Reconcile `UserSchema.fullName` `.toUpperCase()` transform with actual display names (latent — schemas are only used for `z.infer` today).
 - [ ] Decide the fate of the `next-devtools-mcp` dependency (agent tooling, currently in runtime `dependencies`).
 - [ ] Consider adding `updatedAt` to `WorkspaceSchema` (workspace docs carry it after member ops; the type omits it).

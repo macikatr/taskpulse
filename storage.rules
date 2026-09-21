@@ -5,10 +5,11 @@ service firebase.storage {
       // Any signed-in user can read public avatars
       allow read: if true;
       
-      // Upload: user can only write to their own folder
-      // (workspace logos should be uploaded by admins via server action using Admin SDK)
+      // Upload: users can only write to their OWN folder.
+      // No browser write path for workspace logos (kind == "workspaces") —
+      // those must be uploaded server-side via Admin SDK, which bypasses rules.
       allow write: if request.auth != null
-        && (kind == "users" && request.auth.uid == id)
+        && kind == "users" && request.auth.uid == id
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
