@@ -8,14 +8,12 @@ const chartItemSchema = z.object({
   color: z.string(),
 })
 
-const chartDataRowSchema = z.object({
-  month: z.string(),
-})
+
 const BarChartProps= z.object({
     
-    data: z.array(chartDataRowSchema),
+    data: z.array(z.object({month: z.string()})),
     config: z.record(z.string(), chartItemSchema),
-    colNames: z.string()
+    colKey: z.string()
 })
   
 
@@ -23,13 +21,13 @@ const AppBarChart = (props: z.infer<typeof BarChartProps>) => {
   
   const data = props.data
   const config = props.config
-  const colNames = props.colNames
+  const colKey = props.colKey
  
   return (
     <ChartContainer config={config} className="max-h-50 min-h-40 w-full">
       <BarChart accessibilityLayer data={data}>
         <CartesianGrid vertical={false} stroke="gray" strokeDasharray="3 3" />
-        <XAxis dataKey={colNames} tickLine={false} />
+        <XAxis dataKey={colKey} tickLine={false} />
         {Object.keys(config).map((key) => (
           
             <Bar key={key} dataKey={key} fill={config[key].color} radius={4} />

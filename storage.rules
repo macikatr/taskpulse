@@ -8,8 +8,7 @@ service firebase.storage {
       // Upload: user can only write to their own folder
       // (workspace logos should be uploaded by admins via server action using Admin SDK)
       allow write: if request.auth != null
-        && (kind == "users" && request.auth.uid == id
-            || kind == "workspaces" && request.auth != null)  // any authed user (server action for non-owner)
+        && (kind == "users" && request.auth.uid == id)
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
