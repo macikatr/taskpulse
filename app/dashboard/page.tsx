@@ -1,5 +1,7 @@
 import { getCurrentUser } from "@/lib/firebase/auth-server";
 import { getUserWorkspaces } from "@/actions/workspace";
+import { isSuperuser } from "@/lib/firebase/role-manager";
+import { ensureUserProfile } from "@/actions/user-profile";
 import { redirect } from "next/navigation";
 import { SignOutButton } from "./sign-out-button";
 import { WorkspaceClient } from "./workspace-client";
@@ -8,11 +10,16 @@ import { Sparkles, Server, ShieldCheck, Database, Code2 } from "lucide-react";
 export default async function DashboardPage() {
   // 1. Server-side session verification via Admin SDK
   const user = await getCurrentUser();
+  
 
   if (!user) {
     redirect("/login");
   }
-
+  // Bootstrap users/{uid} on first visit (idempotent). isSuperuser() reads
+  // users/{uid}.email — without a profile doc it returns false and hides
+  // superuser-only UI from legitimate superusers.
+  await ensureUserProfile(user.uid);
+  const isSuper = await isSuperuser(user.uid);
   // 2. Server-side pre-rendering with Admin SDK
   // Fetches workspaces before HTML is streamed to the browser
   const initialWorkspaces = await getUserWorkspaces();
@@ -57,6 +64,7 @@ export default async function DashboardPage() {
         <WorkspaceClient
           initialWorkspaces={initialWorkspaces}
           currentUserUid={user.uid}
+          isSuperuser={isSuper}
         />
 
         {/* Deep Dive Architecture Reference */}

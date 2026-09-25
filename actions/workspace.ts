@@ -2,102 +2,83 @@
 
 import { adminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/auth-server";
+import { ensureUserProfile } from "@/actions/user-profile";
+import { isSuperuser } from "@/lib/firebase/role-manager";
 import { FieldValue } from "firebase-admin/firestore";
 import { revalidatePath } from "next/cache";
-import type { TaskPriority, Workspace } from "@/types/taskpulse";
+import type { Workspace } from "@/types/taskpulse";
 
 /**
- * Server Action: Creates a new Workspace using the Admin SDK.
- * Admin SDK bypasses security rules, so we perform authorization checks in server code.
+ * SUPERUSER-ONLY: Creates a workspace. The superuser (project owner) decides
+ * who the initial owner and members are, and assigns the initial "admin" role.
+ * Regular authenticated users CANNOT create workspaces.
  */
-export async function createWorkspace(name: string) {
-  const user = await getCurrentUser();
-  if (!user) {
-    throw new Error("Unauthorized: Must be logged in to create a workspace.");
-  }
+export async function createWorkspace(
+  name: string,
+  opts: { ownerId?: string; initialMembers?: Array<{ uid: string; role?: "admin" | "member" }> } = {}
+) {
+  const caller = await getCurrentUser();
+  if (!caller) throw new Error("Unauthorized");
+  if (!await isSuperuser(caller.uid)) throw new Error("Forbidden: superuser permission required to create a workspace.");
 
   const trimmedName = name.trim();
-  if (!trimmedName || trimmedName.length > 50) {
-    throw new Error("Workspace name must be between 1 and 50 characters.");
+  if (!trimmedName || trimmedName.length > 50) throw new Error("Workspace name must be 1–50 chars.");
+
+  // The ownerId defaults to the superuser's own uid if not specified
+  const ownerId = opts.ownerId ?? caller.uid;
+  await ensureUserProfile(ownerId); // profile doc must exist before workspace does
+
+  // Build memberIds + memberRoles
+  const memberIds = new Set([ownerId, ...(opts.initialMembers ?? []).map(m => m.uid)]);
+  const memberRoles: Record<string, "admin" | "member"> = {};
+  for (const uid of memberIds) memberRoles[uid] = "member";
+  memberRoles[ownerId] = "admin";  // owner is always admin
+  for (const m of (opts.initialMembers ?? [])) {
+    if (m.role) memberRoles[m.uid] = m.role;
   }
 
   const docRef = await adminDb.collection("workspaces").add({
     name: trimmedName,
-    ownerId: user.uid,
-    memberIds: [user.uid],
+    ownerId,
+    memberIds: [...memberIds],
+    memberRoles,
     createdAt: FieldValue.serverTimestamp(),
   });
 
   revalidatePath("/dashboard");
-  return { success: true, workspaceId: docRef.id };
+  return { success: true, data: { workspaceId: docRef.id } };
 }
 
 /**
- * Server Action: Creates a new Task inside the workspace's tasks subcollection.
- */
-export async function createTask(
-  workspaceId: string,
-  data: {
-    title: string;
-    description?: string;
-    priority: TaskPriority;
-  }
-) {
-  const user = await getCurrentUser();
-  if (!user) {
-    throw new Error("Unauthorized");
-  }
-
-  const trimmedTitle = data.title.trim();
-  if (!trimmedTitle) {
-    throw new Error("Task title cannot be empty.");
-  }
-
-  // Path: /workspaces/{workspaceId}/tasks/{taskId}
-  const taskRef = await adminDb
-    .collection("workspaces")
-    .doc(workspaceId)
-    .collection("tasks")
-    .add({
-      title: trimmedTitle,
-      description: data.description?.trim() || "",
-      status: "todo",
-      priority: data.priority,
-      workspaceId,
-      createdBy: user.uid,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-
-  revalidatePath("/dashboard");
-  return { success: true, taskId: taskRef.id };
-}
-
-/**
- * Server function: Retrieves all workspaces where current user is a member.
- * Used for pre-rendering in Server Components.
+ * Reads the workspaces visible to the current user.
+ * - Superusers: ALL workspaces (superuser bypasses membership, per the RBAC model).
+ * - Everyone else: only workspaces where they are in `memberIds`.
+ * Used for server-side pre-rendering in the dashboard page.
  */
 export async function getUserWorkspaces(): Promise<Workspace[]> {
   const user = await getCurrentUser();
   if (!user) return [];
 
-  // Query using array-contains on memberIds
-  const snapshot = await adminDb
-    .collection("workspaces")
-    .where("memberIds", "array-contains", user.uid)
-    .get();
+  const isSuper = await isSuperuser(user.uid);
 
-  return snapshot.docs.map((doc) => {
-    const data = doc.data();
+  const baseQuery = adminDb.collection("workspaces");
+  const queryRef = isSuper
+    ? baseQuery
+    : baseQuery.where("memberIds", "array-contains", user.uid);
+  const snap = await queryRef.get();
+
+  return snap.docs.map(doc => {
+    const d = doc.data();
+    const ts = (t: unknown) =>
+      (t as { toDate?: () => Date })?.toDate?.().toISOString() ?? new Date().toISOString();
     return {
       id: doc.id,
-      name: data.name,
-      ownerId: data.ownerId,
-      memberIds: data.memberIds || [],
-      // Convert Firestore Timestamp to plain string for RSC serialization
-      createdAt: data.createdAt?.toDate?.()
-        ? data.createdAt.toDate().toISOString()
-        : new Date().toISOString(),
+      name: d.name,
+      ownerId: d.ownerId,
+      memberIds: d.memberIds ?? [],
+      memberRoles: d.memberRoles ?? {},
+      imageUrl: d.imageUrl,
+      createdAt: ts(d.createdAt),
     };
   });
 }

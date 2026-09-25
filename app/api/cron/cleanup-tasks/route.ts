@@ -5,16 +5,15 @@ import { Timestamp } from "firebase-admin/firestore";
 /**
  * Cron Job / Scheduled Maintenance Endpoint
  * 
- * Invoked by external cron schedulers (e.g. Google Cloud Scheduler, Vercel Cron, GitHub Actions)
- * or triggered manually for testing from the dashboard.
+ * Invoked by external cron schedulers or triggered manually from the dashboard.
  * 
- * Topic: In-Depth Firestore Collection Groups, Timestamps vs ISO Strings, and Batched Writes.
+ * Deep Dive: Firestore Collection Groups, Indexing Requirements, and Batch Operations.
  */
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
 
-    // Support flexible threshold for testing:
+    // Flexible threshold support:
     // e.g. /api/cron/cleanup-tasks?minutes=5 OR /api/cron/cleanup-tasks?days=7
     const daysParam = searchParams.get("days");
     const minutesParam = searchParams.get("minutes");
@@ -37,33 +36,73 @@ export async function GET(request: Request) {
 
     /**
      * FIRESTORE COLLECTION GROUP QUERY:
-     * Tasks are stored in subcollections: /workspaces/{workspaceId}/tasks/{taskId}
-     * A regular collection query only looks at root collections.
-     * `collectionGroup('tasks')` searches across ALL 'tasks' subcollections across every workspace!
+     * 
+     * In Firestore, querying subcollections with .where() across all documents
+     * (collectionGroup) requires a Collection Group Index scope on the field.
+     * 
+     * We attempt the indexed query first. If the index is still building or not yet
+     * enabled, we gracefully fall back to querying all tasks and filtering in memory.
      */
-    const snapshot = await adminDb
-      .collectionGroup("tasks")
-      .where("status", "==", "done")
-      .get();
+    let completedDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    let usedIndex = true;
+    let indexSetupUrl: string | null = null;
 
-    // In-depth learning: Compare Firestore Timestamp / ISO string against cutoff
+    try {
+      const snapshot = await adminDb
+        .collectionGroup("tasks")
+        .where("status", "==", "done")
+        .get();
+      completedDocs = snapshot.docs;
+    } catch (err) {
+      // 1. Verify err is a valid object so we can read its properties safely
+      if (err && typeof err === "object") {
+        const errorObj = err as Record<string, unknown>;
+        const errorCode = errorObj.code;
+        const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
+
+        // 2. Perform conditional checks safely using the typed variables
+        if (errorCode === 9 || errorMessage.includes("FAILED_PRECONDITION")) {
+          usedIndex = false;
+
+          // Extract the index creation URL provided by Firestore if present
+          const match = errorMessage.match(/https:\/\/console\.firebase\.google\.com[^\s]+/);
+          if (match) {
+            indexSetupUrl = match[0];
+          }
+
+          // Graceful fallback: scan collection group and filter in memory
+          const allTasksSnapshot = await adminDb.collectionGroup("tasks").get();
+          completedDocs = allTasksSnapshot.docs.filter(
+            (doc) => doc.data().status === "done"
+          );
+          // (No early return — fall through to the deletion + JSON response below.)
+        }
+      }
+
+      // 3. Re-throw the original error if it wasn't the missing index error
+      throw err;
+    }
+
+    // Compare completedAt / updatedAt against the cutoff timestamp
     const docsToDelete: FirebaseFirestore.DocumentReference[] = [];
-    const inspectionList: any[] = [];
+    type InspectionEntry = { id: string; title: string; completedAt: string; path: string };
+    const inspectionList: InspectionEntry[] = [];
 
-    for (const doc of snapshot.docs) {
+    for (const doc of completedDocs) {
       const data = doc.data();
       
-      // Handle both native Firestore Timestamp and fallback fields (updatedAt / completedAt)
       let docTimeMillis: number | null = null;
       if (data.completedAt instanceof Timestamp) {
         docTimeMillis = data.completedAt.toMillis();
       } else if (data.updatedAt instanceof Timestamp) {
         docTimeMillis = data.updatedAt.toMillis();
       } else if (typeof data.completedAt === "string") {
-        // Parsing ISO string
         docTimeMillis = new Date(data.completedAt).getTime();
+      } else if (typeof data.updatedAt === "string") {
+        docTimeMillis = new Date(data.updatedAt).getTime();
       }
 
+      // If document was completed on or before the cutoff time, mark for deletion
       if (docTimeMillis !== null && docTimeMillis <= cutoffMillis) {
         docsToDelete.push(doc.ref);
         inspectionList.push({
@@ -75,8 +114,7 @@ export async function GET(request: Request) {
       }
     }
 
-    // ATOMIC BATCHED DELETE:
-    // Instead of deleting documents sequentially, execute up to 500 deletions atomically
+    // Atomic batched deletion
     if (docsToDelete.length > 0) {
       const batch = adminDb.batch();
       docsToDelete.forEach((ref) => batch.delete(ref));
@@ -90,14 +128,19 @@ export async function GET(request: Request) {
         isoString: cutoffISOString,
         epochMillis: cutoffMillis,
       },
-      scannedCompletedTasks: snapshot.size,
+      scannedCompletedTasks: completedDocs.length,
       deletedCount: docsToDelete.length,
       deletedTasks: inspectionList,
+      indexStatus: usedIndex
+        ? "Active (Indexed query)"
+        : "Fallback scan used (Index creation recommended for production)",
+      indexSetupUrl,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Cron cleanup error:", error);
+    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
     return NextResponse.json(
-      { success: false, error: error.message },
+      { success: false, error: errorMessage },
       { status: 500 }
     );
   }

@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+/tests/
+/test-results
 
 # next.js
 /.next/
@@ -29,9 +31,18 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
+firebase-debug.log
 
 # env files (can opt-in for committing if needed)
 .env*
+.firebase/
+
+*.html
+# Temporal ignores
+
+
+
 
 # vercel
 .vercel
@@ -39,3 +50,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# agentic files
+/.opencode
+.opencode.*
+opencode.*
+/.agents

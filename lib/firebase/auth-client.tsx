@@ -31,7 +31,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Helper to synchronously await session creation
   const syncSession = async (currentUser: User | null) => {
     if (currentUser) {
-      const idToken = await currentUser.getIdToken();
+      const idToken = await currentUser.getIdToken(); // Returns a JSON Web Token (JWT) used to identify the user to a Firebase service.
       await createSession(idToken);
     } else {
       await removeSession();
