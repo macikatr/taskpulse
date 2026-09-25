@@ -1,9 +1,12 @@
-schedule:
-  - cron: '0 3 * * *'   # daily at 03:00 UTC
+on:
+  schedule:
+    - cron: '30 0 1 * *'
+      timezone: "America/New_York"
+
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
       - name: Run task cleanup
         run: |
-          curl -sS -f "https://<your-app>/api/cron/cleanup-tasks?days=120&secret=${{ secrets.CRON_SECRET }}"
+          curl -sS -f "https://taskpulse/api/cron/cleanup-tasks?days=120&secret=${{ secrets.CRON_SECRET }}"
