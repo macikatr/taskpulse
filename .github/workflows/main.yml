@@ -1,3 +1,9 @@
-- name: Run cleanup
-  run: |
-    curl -sS -f "https://<app>/api/cron/cleanup-tasks?days=120&secret=${{ secrets.CRON_SECRET }}
+schedule:
+  - cron: '0 3 * * *'   # daily at 03:00 UTC
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run task cleanup
+        run: |
+          curl -sS -f "https://<your-app>/api/cron/cleanup-tasks?days=120&secret=${{ secrets.CRON_SECRET }}"
